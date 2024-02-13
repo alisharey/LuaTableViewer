@@ -24,7 +24,7 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private bool _isDarkTheme;
 
-    private readonly CustomLuaTable? _luaTable;
+    private CustomLuaTable? _luaTable;
 
     partial void OnIsDarkThemeChanged(bool value)
     {
@@ -34,20 +34,48 @@ public partial class MainWindowViewModel : ObservableObject
         theme.SetBaseTheme(value ? Theme.Dark : Theme.Light);
         helper.SetTheme(theme);
         
+
+    }
+
+    [RelayCommand]
+    private void OpenFile()
+    {
+        var fileDialog = new OpenFileDialog();
+        if (fileDialog.ShowDialog() == true)
+        {
+            _luaTable = new CustomLuaTable(fileDialog.FileName);
+            DataView = _luaTable.GetDataView();
+        }
+        
+    }
+
+    [RelayCommand]
+    private void CloseFile()
+    {
+        _luaTable = null;
+        DataView = null;
+
+
+    }
+
+    [RelayCommand]
+    private void SaveFile() 
+    {
         _luaTable?.SaveLuaTable(DataView ?? new());
     }
+
 
     [RelayCommand]
     public void CellChanged(DataGridCellEditEndingEventArgs e)
     {
         string value = ((TextBox)e.EditingElement).Text;
         string columnName = e.Column.SortMemberPath.ToString() ?? "";
-        string rowID = ((DataRowView)e.Row.Item).Row["id"].ToString() ?? "";
+        string rowKey = ((DataRowView)e.Row.Item).Row["Key"].ToString() ?? "";
 
-        bool columnExists = _luaTable?.RowContainsColumn(rowID, columnName) ?? true;
+        bool columnExists = _luaTable?.RowContainsColumn(rowKey, columnName) ?? true;
         if(!columnExists)
         {
-            _luaTable?.AddColumnToRow(rowID, columnName);
+            _luaTable?.AddColumnToRow(rowKey, columnName);
         }
 
 
@@ -64,8 +92,7 @@ public partial class MainWindowViewModel : ObservableObject
         var currentTheme = theme.GetBaseTheme();
         IsDarkTheme = currentTheme == BaseTheme.Dark;
 
-        _luaTable = new CustomLuaTable(@"Resources\Table_Boss.txt");
-        DataView = _luaTable.GetDataViewPlus();
+        
 
        
     }

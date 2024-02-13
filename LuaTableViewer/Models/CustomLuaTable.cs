@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 
 
 
+
 using NLua;
 
 namespace LuaTableViewer.Models
@@ -16,11 +17,12 @@ namespace LuaTableViewer.Models
     public class CustomLuaTable
     {
         private readonly string _filename = "";
+        private readonly string _tablename = "";
         LuaTable? LuaTable { get; set; }
         Dictionary<object, object>? LuaTableDict { get; set; }
         Lua Lua { get; set; }
 
-        Dictionary<object, object>? RowInfo { get; set; }
+        private Dictionary<object, object>? _rowInfo;
 
         public CustomLuaTable(string filename)
         {
@@ -28,27 +30,38 @@ namespace LuaTableViewer.Models
             Lua = new Lua();
             Lua.DoFile(filename);
 
-            // Access Lua variables
-            object[] result = Lua.DoString("return Table_Boss");
-            object luaTableObject = result[0];
-            LuaTable = (LuaTable)luaTableObject;
+            var tableNames = Lua.DoString(@"
+                local tables = {}
+                for k, v in pairs(_G) do
+                    if type(v) == 'table' and k ~= ""table"" and k ~= ""luanet"" and k ~= ""_G"" and k ~= ""package"" and k ~= ""io"" and k ~= ""os"" and k ~= ""string"" and k ~= ""coroutine"" and k ~= ""utf8"" and k ~= ""debug"" and k ~= ""math"" then
+                        tables[#tables + 1] = k
+                    end
+                end
+                return tables
+            
+            ");
+
+            _tablename = (tableNames?[0] as LuaTable)?.Values.Cast<string>().FirstOrDefault() ?? "";
+
+            LuaTable = Lua.GetTable(_tablename);
             LuaTableDict = Lua.GetTableDict(LuaTable);
+            LuaTableDict = LuaTableDict.OrderBy(kvp => int.Parse(kvp.Key.ToString() ?? "0")).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
 
             
 
+            
         }
-
         private void SetRowInfo(LuaTable? value)
         {
             var _value = Lua.GetTableDict(value);
-
+            _value = _value.OrderBy(kvp => kvp.Key.ToString()).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             if (_value != null)
             {
                 foreach (KeyValuePair<object, object> kvp in _value)
                 {
                     if (kvp.Value is string s)
                     {
-                        RowInfo?.Add(kvp.Key, s);
+                        _rowInfo?.Add(kvp.Key, s);
                     }
                     else if (kvp.Value is LuaTable tableValue)
                     {
@@ -62,21 +75,21 @@ namespace LuaTableViewer.Models
                                 values.Add($"[{_kvp.Key}]={_kvp.Value}");
                             }
                             //add value= string.Join(", ", values)
-                            RowInfo?.Add(kvp.Key, string.Join(", ", values));
+                            _rowInfo?.Add(kvp.Key, string.Join(", ", values));
 
                         }
                         else if (CheckSequential(dict.Keys.ToList()))
                         {
-                            RowInfo?.Add(kvp.Key, string.Join(", ", dict.Values));
+                            _rowInfo?.Add(kvp.Key, string.Join(", ", dict.Values));
                         }
                         else
                         {
                             // add key and empty value to leader. 
-                            RowInfo?.Add(kvp.Key, "");
+                            _rowInfo?.Add(kvp.Key, "");
                             SetRowInfo(tableValue);
                         }
                     }
-                    else RowInfo?.Add(kvp.Key, kvp.Value);
+                    else _rowInfo?.Add(kvp.Key, kvp.Value);
 
 
                 }
@@ -86,25 +99,28 @@ namespace LuaTableViewer.Models
 
 
         }
-        public DataView? GetDataViewPlus()
+
+        public DataView? GetDataView()
         {
             var list = new List<string>();
             DataTable dt = new();
             if (LuaTableDict is { })
             {
-                RowInfo = new();
+                _rowInfo = new();
                 SetRowInfo(LuaTableDict.First().Value as LuaTable);
-                var columnNames = RowInfo.Keys;
-                
+                var columnNames = _rowInfo.Keys;
+
+                var keycolumn = dt.Columns.Add("Key");
+                keycolumn.ReadOnly = true;
                 dt.Columns.AddRange(columnNames.Select(columnName => new DataColumn(columnName.ToString())).ToArray());
 
 
                 foreach (KeyValuePair<object, object> row in LuaTableDict)
                 {
-                    RowInfo = new();
+                    _rowInfo = new();
                     SetRowInfo(row.Value as LuaTable);
                     //check if theres a non existing column
-                    var columns = RowInfo.Keys;
+                    var columns = _rowInfo.Keys;
                     foreach (var key in columns)
                     {
                         bool columnExists = dt.Columns.Cast<DataColumn>().Any(column => column.ColumnName.Equals(key.ToString(), StringComparison.OrdinalIgnoreCase));
@@ -115,9 +131,9 @@ namespace LuaTableViewer.Models
 
                     }
                     DataRow newRow = dt.NewRow();
+                    newRow["key"] = row.Key.ToString();
 
-
-                    foreach (var kvp in RowInfo)
+                    foreach (var kvp in _rowInfo)
                     {
                         newRow[kvp.Key.ToString() ?? ""] = kvp.Value;
                     }
@@ -129,68 +145,33 @@ namespace LuaTableViewer.Models
                 }
             }
 
+            // sort the columns for the second time -- missses up order for nested dicts
+            //var sortedColumns = dt.Columns.Cast<DataColumn>()
+            //                    .OrderBy(column => column.ColumnName)
+            //                    .ToList();
+            //foreach (var column in sortedColumns)
+            //{
+            //    dt.Columns[column.ColumnName]?.SetOrdinal(sortedColumns.IndexOf(column));
 
+            //}
             return dt.DefaultView;
 
         }
 
 
-        public DataView? GetDataView()
-        {
-            var columnNames = Lua.GetTableDict(LuaTableDict?.First().Value as LuaTable).Keys;
-            DataTable dt = new();
-            dt.Columns.AddRange(columnNames.Select(columnName => new DataColumn(columnName.ToString())).ToArray());
 
-            var list = new List<string>();
-            if (LuaTableDict is { })
-            {
-                foreach (KeyValuePair<object, object> row in LuaTableDict)
-                {
-                    var lineInfo = ConvertLineToString(row.Value as LuaTable);
-
-                    //check if theres a non existing column
-                    var columns = lineInfo.Parameters.Keys;
-                    foreach (var key in columns)
-                    {
-                        bool columnExists = dt.Columns.Cast<DataColumn>().Any(column => column.ColumnName.Equals(key.ToString(), StringComparison.OrdinalIgnoreCase));
-                        if (!columnExists)
-                        {
-                            dt.Columns.Add(new DataColumn(key.ToString()));
-                        }
-
-                    }
-                    DataRow newRow = dt.NewRow();
-
-
-                    foreach (var kvp in lineInfo.Parameters)
-                    {
-
-                        newRow[kvp.Key] = kvp.Value;
-                    }
-
-                    dt.Rows.Add(newRow);
-
-
-
-                }
-            }
-
-
-            return dt.DefaultView;
-
-        }
-
-        private List<string> ConverLuaToStringList(List<Dictionary<string, object>> info)
+        private List<string> ConvertToStringList(List<Dictionary<string, object>> info)
         {
             var list = new List<string>();
             if (LuaTableDict is { })
             {
+
                 foreach (var row in LuaTableDict)
                 {
-                    string id = row.Key.ToString() ?? "";
-                    var changedInfo = info.FirstOrDefault(dict => dict.ContainsKey("id") && dict["id"].ToString() == id);
-                    var lineInfo = ConvertLineToString(row.Value as LuaTable, changedInfo);
-                    string? line = $"\t[{id}] = {{{lineInfo.Text}}}";
+                    string key = row.Key.ToString() ?? "";
+                    var changedInfo = info.FirstOrDefault(dict => dict.ContainsKey("Key") && dict["Key"].ToString() == key);
+                    var lineInfo = ConvertLuaTableRowToString(row.Value as LuaTable, changedInfo);
+                    string? line = $"\t[{key}] = {{{lineInfo.Text}}}";
                     list.Add(line);
 
                 }
@@ -200,45 +181,48 @@ namespace LuaTableViewer.Models
             return list;
         }
 
-        private LuaTableLine ConvertLineToString(LuaTable? luaTable, Dictionary<string, object>? changedInfo)
+        private LuaTableLine ConvertLuaTableRowToString(LuaTable? luaTableRow, Dictionary<string, object>? changedInfo)
         {
-            var _value = Lua.GetTableDict(luaTable);
-            Dictionary<string, object> parameters = new();
-            if (_value != null)
-            {
-                foreach (KeyValuePair<object, object> kvp in _value)
-                {
-                    object obj;
+            var rowDict = Lua.GetTableDict(luaTableRow);
+            rowDict = rowDict.OrderBy(kvp => kvp.Key.ToString()).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
 
-                    if (kvp.Value is string s)
+            Dictionary<string, object> parameters = new();
+            if (rowDict != null)
+            {
+                foreach (KeyValuePair<object, object> kvp in rowDict)
+                {
+                    object formattedValue;
+                    string value = changedInfo?[kvp.Key.ToString() ?? ""].ToString() ?? "";
+
+                    if (kvp.Value is string)
                     {
-                        s = changedInfo?[kvp.Key.ToString() ?? ""].ToString() ?? "";
-                        obj = $"'{s}'";
+                        formattedValue = $"'{value}'";
                     }
                     else if (kvp.Value is LuaTable tableValue)
                     {
 
                         var dict = Lua.GetTableDict(tableValue);
-                        bool isNewTable = CheckNumericalID(dict.Keys.ToList());
-                        if (isNewTable || CheckSequential(dict.Keys.ToList())) //ReliveTime = {[9]=15} 
+                        var keys = dict.Keys.ToList();
+
+                        if (CheckNumericalID(keys) || CheckSequential(keys))
                         {
-                            obj = "{" + (changedInfo?[kvp.Key.ToString() ?? ""].ToString() ?? "") + "}";
+                            formattedValue = "{" + value + "}";
 
                         }
                         else
                         {
                             if (tableValue.Keys.Count > 0)
                             {
-                                obj = $"{{{ConvertLineToString(tableValue, changedInfo).Text}}}";
+                                formattedValue = $"{{{ConvertLuaTableRowToString(tableValue, changedInfo).Text}}}";
                             }
-                            else obj = "{" + (changedInfo?[kvp.Key.ToString() ?? ""].ToString() ?? "") + "}";
+                            else formattedValue = "{" + value + "}";
 
 
                         }
                     }
-                    else obj = changedInfo?[kvp.Key.ToString() ?? ""].ToString() ?? "";
+                    else formattedValue = value;
 
-                    parameters.Add(kvp.Key.ToString() ?? "", obj);
+                    parameters.Add(kvp.Key.ToString() ?? "", formattedValue);
                     // try here 
                 }
 
@@ -253,124 +237,6 @@ namespace LuaTableViewer.Models
         }
 
 
-
-        private List<string> ConverLuaToStringList()
-        {
-            var list = new List<string>();
-            if (LuaTableDict is { })
-            {
-                foreach (var row in LuaTableDict)
-                {
-                    var lineInfo = ConvertLineToString(row.Value as LuaTable);
-                    string? line = $"\t[{row.Key.ToString()}] = {{{lineInfo.Text}}}";
-                    list.Add(line);
-
-                }
-            }
-
-
-            return list;
-        }
-
-        private LuaTableLine ConvertLineToString(LuaTable? luaTable)
-        {
-            var _value = Lua.GetTableDict(luaTable);
-            Dictionary<string, object> parameters = new();
-            if (_value != null)
-            {
-                foreach (KeyValuePair<object, object> kvp in _value)
-                {
-                    object obj;
-
-                    if (kvp.Value is string s)
-                    {
-                        obj = $"'{s}'";
-                    }
-                    else if (kvp.Value is LuaTable tableValue)
-                    {
-
-                        var dict = Lua.GetTableDict(tableValue);
-                        bool isNewTable = CheckNumericalID(dict.Keys.ToList());
-                        if (isNewTable) //ReliveTime = {[9]=15} 
-                        {
-                            List<string> values = new();
-                            foreach (var _kvp in dict)
-                            {
-                                values.Add($"[{_kvp.Key}]={_kvp.Value}");
-                            }
-                            obj = "{" + string.Join(", ", values) + "}";
-
-                        }
-                        else if (CheckSequential(dict.Keys.ToList()))
-                        {
-                            obj = "{" + string.Join(", ", dict.Values) + "}";
-
-                        }
-                        else
-                        {
-                            obj = $"{{{ConvertLineToString(tableValue).Text}}}";
-                        }
-                    }
-                    else obj = kvp.Value;
-
-                    parameters.Add(kvp.Key.ToString() ?? "", obj);
-                    // try here 
-                }
-
-            }
-            var text = string.Join(", ", parameters.Select(kvp => kvp.Key + " = " + kvp.Value));
-
-            return new LuaTableLine()
-            {
-                Text = text,
-                Parameters = parameters
-            };
-
-
-        }
-        
-        public void SaveLuaTable()
-        {
-            var lines = ConverLuaToStringList();
-
-            var intialLines = File.ReadAllLines(_filename);
-            string someEncodedBs = intialLines[0];
-            string TableNameline = intialLines[1];
-            string ending = $"}}\nreturn {TableNameline.Split(" = ").First()}";
-
-            string output = someEncodedBs + "\n" + TableNameline + "\n"
-                + string.Join(",\n", lines) + "\n" + ending;
-
-            File.WriteAllText("output.txt", output);
-
-        }
-
-
-        public void SaveLuaTable(DataView dataView)
-        {
-            List<Dictionary<string, object>> info = new();
-
-            foreach(DataRow dataRow in dataView.ToTable().Rows)
-            {
-                var dataRowdict = dataRow.Table.Columns.Cast<DataColumn>().ToDictionary(col => col.ColumnName, col => dataRow[col]);
-                info.Add(dataRowdict);
-            }
-
-            var lines = ConverLuaToStringList(info);
-
-            var intialLines = File.ReadAllLines(_filename);
-            string someEncodedBs = intialLines[0];
-            string TableNameline = intialLines[1];
-            string ending = $"}}\nreturn {TableNameline.Split(" = ").First()}";
-
-            string output = someEncodedBs + "\n" + TableNameline + "\n"
-                + string.Join(",\n", lines) + "\n" + ending;
-
-            File.WriteAllText("output.txt", output);
-
-        }
-
-        
 
         private static bool CheckNumericalID(List<object> list)
         {
@@ -380,8 +246,6 @@ namespace LuaTableViewer.Models
             }
             else return false;
         }
-
-
         private static bool CheckSequential(List<object> list)
         {
             if (list.Count == 1 && list[0] is long x)
@@ -407,35 +271,64 @@ namespace LuaTableViewer.Models
             return true;
         }
 
-        internal bool RowContainsColumn(string rowID, string columnName)
+
+
+        public void SaveLuaTable(DataView dataView)
         {
-            var row = LuaTableDict?.Where(kvp => kvp.Key.ToString() == rowID).First().Value;           
+            List<Dictionary<string, object>> dataTableDict = new();
+
+            foreach (DataRow dataRow in dataView.ToTable().Rows)
+            {
+                var dataRowdict = dataRow.Table.Columns.Cast<DataColumn>().ToDictionary(col => col.ColumnName, col => dataRow[col]);
+                dataTableDict.Add(dataRowdict);
+            }
+
+            var lines = ConvertToStringList(dataTableDict);
+
+            var intialLines = File.ReadAllLines(_filename);
+            //string someEncodedBs = intialLines[0] + "\n";
+            string TableNameline = $"{_tablename} = {{\n";
+            string ending = $"}}\nreturn {_tablename}";
+
+            string output = TableNameline + string.Join(",\n", lines) + "\n" + ending;
+
+            File.WriteAllText(_filename, output);
+
+        }
+
+
+
+
+
+        internal bool RowContainsColumn(string key, string columnName)
+        {
+            var row = LuaTableDict?.Where(kvp => (kvp.Key.ToString() ?? "") == key).First().Value;
             var dict = Lua.GetTableDict(row as LuaTable);
             return dict.Keys.Contains(columnName);
         }
 
-        internal void AddColumnToRow(string rowID, string columnName)
+        internal void AddColumnToRow(string key, string columnName)
         {
-            if(LuaTableDict is { })
+            if (LuaTableDict is { })
             {
-                var row = LuaTableDict.Where(kvp => kvp.Key.ToString() == rowID).First().Value as LuaTable;               
-                
+                var row = LuaTableDict.Where(kvp => kvp.Key.ToString() == key).First().Value as LuaTable;
+
                 foreach (var kvp in LuaTableDict)
                 {
-                    
-                    string rowid = kvp.Key.ToString() ?? "";
-                    if (RowContainsColumn(rowid, columnName))
+
+                    string rowkey = kvp.Key.ToString() ?? "";
+                    if (RowContainsColumn(rowkey, columnName))
                     {
                         var inner_dict = Lua.GetTableDict(kvp.Value as LuaTable);
-                        if(row is { }) row[columnName] = inner_dict[columnName];                        
+                        if (row is { }) row[columnName] = inner_dict[columnName];
                         return;
-                    }                
+                    }
 
 
                 }
             }
-           
-            
+
+
         }
     }
 }

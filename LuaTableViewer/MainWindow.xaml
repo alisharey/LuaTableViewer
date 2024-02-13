@@ -18,23 +18,34 @@
       <RowDefinition />
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
-    <StackPanel Orientation="Horizontal"
-                HorizontalAlignment="Right">
-      <materialDesign:PackIcon VerticalAlignment="Center"
-                               Kind="WhiteBalanceSunny" />
-      <ToggleButton IsChecked="{Binding IsDarkTheme, Delay=250}"
-                    Style="{StaticResource MaterialDesignSwitchToggleButton}"
-                    Margin="5 0" />
-      <materialDesign:PackIcon VerticalAlignment="Center"
-                               Kind="MoonWaningCrescent" />
-    </StackPanel>
+    <Grid Background="{DynamicResource PrimaryHueMidBrush}">
+      <StackPanel Orientation="Horizontal"
+                  HorizontalAlignment="Right">
+        <materialDesign:PackIcon VerticalAlignment="Center"
+                                 Foreground="{Binding Background,RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=Window}}"
+                                 Kind="WhiteBalanceSunny" />
+        <ToggleButton IsChecked="{Binding IsDarkTheme, Delay=250}"
+                      Style="{DynamicResource MaterialDesignSwitchDarkToggleButton}"
+                      Margin="5 0" />
+        <materialDesign:PackIcon VerticalAlignment="Center"
+                                 Foreground="{Binding Background,RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=Window}}"
+                                 Kind="MoonWaningCrescent" />
+      </StackPanel>
 
-    <Menu HorizontalAlignment="Left">
-      <MenuItem Header="_File">
-        <MenuItem Header="E_xit"
-                  Command="{x:Static ApplicationCommands.Close}" />
-      </MenuItem>
-    </Menu>
+      <Menu FontWeight="ExtraBold" HorizontalAlignment="Left">
+        <MenuItem Header="_File">
+          <MenuItem Header="_Open"
+                    Command="{Binding OpenFileCommand}" />
+          <MenuItem Header="_Save"
+                    Command="{Binding SaveFileCommand}" />
+          <MenuItem Header="_Close File"
+                    Command="{Binding CloseFileCommand}" />
+          <MenuItem Header="E_xit"
+                    Command="{x:Static ApplicationCommands.Close}" />
+        </MenuItem>
+      </Menu>
+    </Grid>
+
 
 
     <DataGrid Grid.Row="1"
